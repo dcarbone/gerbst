@@ -129,8 +129,8 @@ func (n *Node) Right() *Node {
 	return n.right
 }
 
-// SearchFunc will recurse through both branches calling the provided function at each node and each  child node.
-// From the root, each immediate child branch is called in a separate go routine.
+// SearchFunc will recurse through both branches calling the provided function at each node its children.
+// From the root node, each immediate child node is recursed through in a separate go routine.
 //
 // To halt recursion, return false from your provided func.
 //
