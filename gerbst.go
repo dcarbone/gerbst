@@ -246,7 +246,6 @@ func (n *Node) DeepestNode() *Node {
 	wg.Wait()
 
 	// determine leafiest
-
 	if rn == nil {
 		return ln
 	} else if ln == nil {
