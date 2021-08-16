@@ -52,4 +52,19 @@ func TestDoesItWorkAtAll(t *testing.T) {
 		t.Log("Unable to locate node with value of 11")
 		t.Fail()
 	}
+
+	if v := n.SmallestKey(); v != 7 {
+		t.Logf("Expected SmallestKey to return %d, saw %d", 7, v)
+		t.Fail()
+	}
+
+	n.Put(7, 1)
+
+	if n1, ok := n.Get(7); !ok {
+		t.Logf("Unable to locate node with key %d", 7)
+		t.Fail()
+	} else if v := n1.Value(); v != 1 {
+		t.Logf("Expected to find node key 7 with updated value of 1, saw %v (%T)", v, v)
+		t.Fail()
+	}
 }

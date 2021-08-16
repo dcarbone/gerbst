@@ -53,13 +53,14 @@ type NodeSearchFunc = func(node *Node) (continue_ bool)
 
 // Node represents a singular position at any point within the tree.
 type Node struct {
-	mu    sync.Mutex
-	key   uint
-	value interface{}
-	depth uint
-	side  NodeSide
-	left  *Node
-	right *Node
+	mu     sync.Mutex
+	key    uint
+	value  interface{}
+	depth  uint
+	side   NodeSide
+	left   *Node
+	right  *Node
+	parent *Node
 }
 
 // New constructs a new root node.  Value is optional, if left blank will be set to value of key.
@@ -70,7 +71,7 @@ func New(key uint, value interface{}) *Node {
 	} else {
 		v = value
 	}
-	return newNode(key, v, 0, NodeSideRoot)
+	return newNode(key, v, 0, NodeSideRoot, nil)
 }
 
 // NewWithKeys populates the tree using a list of keys.  The value of each node will be that of the key of that node.
@@ -86,12 +87,13 @@ func NewWithKeys(keys []uint) *Node {
 }
 
 // newNode constructs the actual node instance
-func newNode(key uint, value interface{}, depth uint, side NodeSide) *Node {
+func newNode(key uint, value interface{}, depth uint, side NodeSide, parent *Node) *Node {
 	n := new(Node)
 	n.key = key
 	n.value = value
 	n.depth = depth
 	n.side = side
+	n.parent = parent
 	return n
 }
 
@@ -102,6 +104,8 @@ func (n *Node) Key() uint {
 
 // Value returns this node's value
 func (n *Node) Value() interface{} {
+	n.mu.Lock()
+	defer n.mu.Unlock()
 	return n.value
 }
 
@@ -113,6 +117,13 @@ func (n *Node) Depth() uint {
 // Side returns the position of this node relative to its parent, or ROOT if it is the root node.
 func (n *Node) Side() NodeSide {
 	return n.side
+}
+
+// Parent returns this node's parent.  If this node is the Root of the tree, this returns nil.
+func (n *Node) Parent() *Node {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.parent
 }
 
 // Left returns the left branch of this tree, if there is one
@@ -129,18 +140,57 @@ func (n *Node) Right() *Node {
 	return n.right
 }
 
+// SmallestKey will return the smallest key in this node's subtree
+func (n *Node) SmallestKey() uint {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.smallestKey()
+}
+
+func (n *Node) smallestKey() uint {
+	minKey := n.key
+
+	if n.left != nil {
+		if v := n.left.SmallestKey(); v < minKey {
+			minKey = v
+		}
+	}
+
+	if n.right != nil {
+		if v := n.right.SmallestKey(); v < minKey {
+			minKey = v
+		}
+	}
+
+	return minKey
+}
+
+func (n *Node) Get(key uint) (*Node, bool) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.key == key {
+		return n, true
+	} else if n.key > key && n.left != nil {
+		if ln, ok := n.left.Get(key); ok {
+			return ln, ok
+		}
+	} else if n.key < key && n.right != nil {
+		if rn, ok := n.right.Get(key); ok {
+			return rn, ok
+		}
+	}
+	return nil, false
+}
+
 // SearchFunc will recurse through both branches calling the provided function at each node its children.
 // From the root node, each immediate child node is recursed through in a separate go routine.
 //
 // To halt recursion, return false from your provided func.
 //
 // This method acquires a lock on the internal mutex of each node.  This means that while you may call exported methods
-// that don't require a lock (Key, Value, Depth, Side, and String, as examples), exported methods that do acquire a lock
+// that don't require a lock (Key, Depth, Side, and String, as examples), exported methods that do acquire a lock
 // may result in deadlock.  Be mindful of this in your function definition.
 func (n *Node) SearchFunc(fn NodeSearchFunc) {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-
 	if !fn(n) {
 		return
 	}
@@ -148,6 +198,9 @@ func (n *Node) SearchFunc(fn NodeSearchFunc) {
 	stop := new(uint32)
 	*stop = 0
 	wg := new(sync.WaitGroup)
+
+	n.mu.Lock()
+	defer n.mu.Unlock()
 
 	// if we have a left branch, recurse through it
 	if n.left != nil {
@@ -177,16 +230,16 @@ func (n *Node) searchFunc(fn NodeSearchFunc, stop *uint32) {
 		return
 	}
 
-	// acquire lock
-	n.mu.Lock()
-	defer n.mu.Unlock()
-
 	// test ourselves
 	if !fn(n) {
 		// if recursion is halted, update stop pointer and return
 		atomic.StoreUint32(stop, 1)
 		return
 	}
+
+	// acquire lock
+	n.mu.Lock()
+	defer n.mu.Unlock()
 
 	// search through the left branch
 	if n.left != nil {
@@ -300,6 +353,8 @@ func (n *Node) Put(key uint, value interface{}) {
 	var v interface{}
 	if value == nil {
 		v = key
+	} else {
+		v = value
 	}
 	n.put(key, v)
 }
@@ -310,15 +365,17 @@ func (n *Node) put(key uint, value interface{}) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
-	if n.key > key {
+	if n.key == key {
+		n.value = value
+	} else if n.key > key {
 		if n.left == nil {
-			n.left = newNode(key, value, n.depth+1, NodeSideLeft)
+			n.left = newNode(key, value, n.depth+1, NodeSideLeft, n)
 		} else {
 			n.left.put(key, value)
 		}
 	} else if n.key < key {
 		if n.right == nil {
-			n.right = newNode(key, value, n.depth+1, NodeSideRight)
+			n.right = newNode(key, value, n.depth+1, NodeSideRight, n)
 		} else {
 			n.right.put(key, value)
 		}
